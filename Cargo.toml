@@ -1,0 +1,8 @@
+[package]
+edition = "2018"
+name = "rust_nes"
+version = "0.1.0"
+
+[dependencies]
+num-derive = "0.2"
+num-traits = "0.2"
