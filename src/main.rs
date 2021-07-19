@@ -31,6 +31,7 @@ pub enum Opcode {
     BRK = 0x00,
     TAX = 0xAA,
     INX = 0xE8,
+    STAZeroPage = 0x85,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +72,7 @@ impl CPU {
                 Some(Opcode::TAX) => self.tax(),
                 Some(Opcode::INX) => self.inx(),
                 Some(Opcode::BRK) => return,
+                Some(Opcode::STAZeroPage) => self.sta(AddressingMode::ZeroPage),
                 None => {
                     panic!("Unable to convert {:#02X?} into opcode", opcode);
                 }
@@ -100,6 +102,13 @@ impl CPU {
         let (x, _) = self.register_x.overflowing_add(1);
         self.register_x = x;
         self.check_zero_and_negative_flags(self.register_x);
+    }
+
+    pub fn sta(&mut self, addressing_mode: AddressingMode) {
+        let addr = self.get_operand_address(&addressing_mode);
+        self.mem_write(addr, self.register_a);
+        let increment = get_increment_size(&addressing_mode);
+        self.program_counter += increment;
     }
 
     pub fn check_zero_and_negative_flags(&mut self, value: u8) {
@@ -299,6 +308,36 @@ mod tests {
         ]);
 
         assert_eq!(cpu.register_x, 1)
+    }
+
+    #[test]
+    pub fn test_sta_zero() {
+        let mut cpu = CPU::default();
+        let val = 0xFA;
+        let addr = 124;
+        cpu.load_and_run(vec![
+            Opcode::LDAImmediate.to_u8().unwrap(),
+            val,
+            0x85,
+            addr,
+            0x00,
+        ]);
+        assert_eq!(cpu.mem_read(addr as u16), val);
+    }
+
+    #[test]
+    pub fn test_sta_zero_page_x() {
+        let mut cpu = CPU::default();
+        let val = 0xFA;
+        let addr = 124;
+        cpu.load_and_run(vec![
+            Opcode::LDAImmediate.to_u8().unwrap(),
+            val,
+            0x85,
+            addr,
+            0x00,
+        ]);
+        assert_eq!(cpu.mem_read(addr as u16), val);
     }
 
     #[test]
