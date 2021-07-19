@@ -24,10 +24,27 @@ impl Default for CPU {
 
 #[derive(FromPrimitive, ToPrimitive)]
 pub enum Opcode {
-    LDA = 0xA9,
+    LDAImmediate = 0xA9,
+    LDAZeroPage = 0xA5,
+    LDAZeroPageX = 0xB5,
+    LDAAbsolute = 0xAD,
     BRK = 0x00,
     TAX = 0xAA,
     INX = 0xE8,
+}
+
+#[derive(Debug, Clone)]
+pub enum AddressingMode {
+    Immediate,
+    ZeroPage,
+    ZeroPageY,
+    ZeroPageX,
+    Absolute,
+    AbsoluteX,
+    AbsoluteY,
+    IndirectX,
+    IndirectY,
+    NoneAddressing,
 }
 
 impl CPU {
@@ -47,7 +64,10 @@ impl CPU {
             self.program_counter += 1;
 
             match Opcode::from_u8(opcode) {
-                Some(Opcode::LDA) => self.lda(),
+                Some(Opcode::LDAImmediate) => self.lda(AddressingMode::Immediate),
+                Some(Opcode::LDAZeroPage) => self.lda(AddressingMode::ZeroPage),
+                Some(Opcode::LDAZeroPageX) => self.lda(AddressingMode::ZeroPageX),
+                Some(Opcode::LDAAbsolute) => self.lda(AddressingMode::Absolute),
                 Some(Opcode::TAX) => self.tax(),
                 Some(Opcode::INX) => self.inx(),
                 Some(Opcode::BRK) => return,
@@ -59,11 +79,14 @@ impl CPU {
     }
 
     /// Loads a byte of memory into the accumulator setting the zero and negative flags as appropriate.
-    pub fn lda(&mut self) {
-        let param = self.mem_read(self.program_counter);
-        self.program_counter += 1;
-        self.register_a = param;
+    pub fn lda(&mut self, addressing_mode: AddressingMode) {
+        let addr = self.get_operand_address(&addressing_mode);
+        let value = self.mem_read(addr);
+
+        self.register_a = value;
         self.check_zero_and_negative_flags(self.register_a);
+        let increment = get_increment_size(&addressing_mode);
+        self.program_counter += increment;
     }
 
     /// Transfer the value of A to X.
@@ -96,6 +119,23 @@ impl CPU {
         } else {
             // Set flag 7 (negative) to 0
             self.status = self.status & 0b0111_1111;
+        }
+    }
+
+    fn get_operand_address(&self, addressing_mode: &AddressingMode) -> u16 {
+        match addressing_mode {
+            AddressingMode::Immediate => self.program_counter,
+            AddressingMode::ZeroPage => self.mem_read(self.program_counter) as u16,
+            AddressingMode::ZeroPageX => {
+                (self.mem_read(self.program_counter) + self.register_x) as u16
+            }
+            AddressingMode::ZeroPageY => todo!(),
+            AddressingMode::Absolute => self.mem_read_u16(self.program_counter),
+            AddressingMode::AbsoluteX => todo!(),
+            AddressingMode::AbsoluteY => todo!(),
+            AddressingMode::IndirectX => todo!(),
+            AddressingMode::IndirectY => todo!(),
+            AddressingMode::NoneAddressing => todo!(),
         }
     }
 
@@ -133,6 +173,13 @@ impl CPU {
     }
 }
 
+fn get_increment_size(addressing_mode: &AddressingMode) -> u16 {
+    match addressing_mode {
+        AddressingMode::Absolute | AddressingMode::AbsoluteX | AddressingMode::AbsoluteY => 2,
+        _ => 1,
+    }
+}
+
 fn main() {
     println!("Hello, world!");
 }
@@ -143,7 +190,7 @@ mod tests {
     use num_traits::ToPrimitive;
 
     #[test]
-    pub fn test_lda_load_immediate_data() {
+    pub fn test_lda_immediate() {
         let val = 0x05;
         let program = vec![0xA9, val, 0x00];
         let mut cpu = CPU::default();
@@ -151,6 +198,44 @@ mod tests {
         assert_eq!(cpu.register_a, val);
         assert!(cpu.status & 0b0000_0010 == 0);
         assert!(cpu.status & 0b1000_0000 == 0);
+    }
+
+    #[test]
+    fn test_lda_zero_page() {
+        let mut cpu = CPU::new();
+        cpu.mem_write(0x10, 0x55);
+        cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
+
+        assert_eq!(cpu.register_a, 0x55);
+    }
+
+    #[test]
+    fn test_lda_zero_page_x() {
+        let mut cpu = CPU::new();
+        let addr = 0x02;
+        let data = 0x55;
+        cpu.mem_write(addr, data);
+        cpu.load_and_run(vec![
+            Opcode::LDAImmediate.to_u8().unwrap(),
+            0x01,
+            Opcode::TAX.to_u8().unwrap(),
+            Opcode::LDAZeroPageX.to_u8().unwrap(),
+            0x01,
+            0x00,
+        ]);
+
+        assert_eq!(cpu.register_a, data);
+    }
+
+    #[test]
+    fn test_lda_absolute() {
+        let mut cpu = CPU::new();
+        let addr = 0x0880;
+        let data = 0xfa;
+        cpu.mem_write(addr, data);
+        cpu.load_and_run(vec![0xAD, 0x80, 0x08, 0x00]);
+
+        assert_eq!(cpu.register_a, data);
     }
 
     #[test]
@@ -166,7 +251,7 @@ mod tests {
     #[test]
     pub fn test_tax() {
         let val = 0x05;
-        let program = vec![Opcode::LDA.to_u8().unwrap(), val, 0xAA, 0x00];
+        let program = vec![Opcode::LDAImmediate.to_u8().unwrap(), val, 0xAA, 0x00];
         let mut cpu = CPU::default();
         cpu.load_and_run(program);
         assert_eq!(cpu.register_x, val);
@@ -179,9 +264,9 @@ mod tests {
         let val = 0x00;
         let program = vec![
             0xAA,
-            Opcode::LDA.to_u8().unwrap(),
+            Opcode::LDAImmediate.to_u8().unwrap(),
             0x01,
-            Opcode::LDA.to_u8().unwrap(),
+            Opcode::LDAImmediate.to_u8().unwrap(),
             val,
             0xAA,
             0x00,
@@ -205,7 +290,7 @@ mod tests {
     fn test_inx_overflow() {
         let mut cpu = CPU::default();
         cpu.load_and_run(vec![
-            Opcode::LDA.to_u8().unwrap(),
+            Opcode::LDAImmediate.to_u8().unwrap(),
             0xff,
             Opcode::TAX.to_u8().unwrap(),
             0xe8,
